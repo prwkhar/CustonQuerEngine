@@ -1,0 +1,6 @@
+Total lines processed: 20332093
+Successfully parsed: 20332093
+Total parse errors: 0
+Elapsed time: 71.5381 seconds
+
+Total_trips: 20332093

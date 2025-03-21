@@ -1,0 +1,8 @@
+Total lines processed: 20332093
+Successfully parsed: 20332093
+Total parse errors: 0
+Elapsed time: 79.1708 seconds
+
+VendorID	Trips	Avg_Passengers
+2	1232	1.224025974025974
+1	10104	1.212292161520190

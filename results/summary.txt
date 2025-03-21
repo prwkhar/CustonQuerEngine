@@ -1,0 +1,8 @@
+QUERY ENGINE EXECUTION SUMMARY
+=============================
+Timestamp: 17:37:52
+
+[query4]
+Status: SUCCESS
+Execution time: 82.86s
+
