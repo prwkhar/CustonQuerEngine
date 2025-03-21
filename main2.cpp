@@ -8,7 +8,7 @@
 
 using namespace std;
 
-// Structure representing a taxi trip record
+// Structure representing a taxi trip record.
 struct TaxiTrip {
     string tpep_pickup_datetime;
     string tpep_dropoff_datetime;
@@ -21,91 +21,66 @@ struct TaxiTrip {
     char store_and_fwd_flag;
 };
 
-// Custom JSON parser for one line (assumes fixed keys and a simple format)
-bool parseJsonLine(const string &line, TaxiTrip &trip) {
-    try {
-        size_t pos, start, end;
-        
-        // Parse tpep_pickup_datetime
-        pos = line.find("\"tpep_pickup_datetime\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find("\"", pos);
-        end = line.find("\"", start + 1);
-        trip.tpep_pickup_datetime = line.substr(start + 1, end - start - 1);
-        
-        // Parse tpep_dropoff_datetime
-        pos = line.find("\"tpep_dropoff_datetime\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find("\"", pos);
-        end = line.find("\"", start + 1);
-        trip.tpep_dropoff_datetime = line.substr(start + 1, end - start - 1);
-        
-        // Parse VendorID
-        pos = line.find("\"VendorID\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.VendorID = stoi(line.substr(start, end - start));
-        
-        // Parse passenger_count (note the key is all lowercase)
-        pos = line.find("\"passenger_count\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.passenger_count = stoi(line.substr(start, end - start));
-        
-        // Parse trip_distance
-        pos = line.find("\"trip_distance\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.trip_distance = stod(line.substr(start, end - start));
-        
-        // Parse payment_type
-        pos = line.find("\"payment_type\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.payment_type = stoi(line.substr(start, end - start));
-        
-        // Parse fare_amount
-        pos = line.find("\"fare_amount\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.fare_amount = stod(line.substr(start, end - start));
-        
-        // Parse tip_amount
-        pos = line.find("\"tip_amount\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find_first_not_of(" ", pos + 1);
-        end = line.find_first_of(",}", start);
-        trip.tip_amount = stod(line.substr(start, end - start));
-        
-        // Parse store_and_fwd_flag
-        pos = line.find("\"store_and_fwd_flag\"");
-        if (pos == string::npos) return false;
-        pos = line.find(":", pos);
-        start = line.find("\"", pos);
-        end = line.find("\"", start + 1);
-        string flag = line.substr(start + 1, end - start - 1);
-        trip.store_and_fwd_flag = (!flag.empty()) ? flag[0] : 'N';
-        
-        return true;
-    } catch (...) {
-        return false;
+// Helper function to extract a value (as a string) from a JSON line given a key.
+// Returns an empty string if the key is not found.
+string getJsonValue(const string &line, const string &key) {
+    string searchKey = "\"" + key + "\"";
+    size_t keyPos = line.find(searchKey);
+    if(keyPos == string::npos) return "";
+    size_t colonPos = line.find(":", keyPos + searchKey.length());
+    if(colonPos == string::npos) return "";
+    size_t valueStart = line.find_first_not_of(" \t", colonPos + 1);
+    if(valueStart == string::npos) return "";
+    if(line[valueStart] == '"') { // Value is quoted.
+        size_t valueEnd = line.find("\"", valueStart + 1);
+        if(valueEnd == string::npos) return "";
+        return line.substr(valueStart + 1, valueEnd - valueStart - 1);
+    } else {
+        size_t valueEnd = line.find_first_of(",}", valueStart);
+        return line.substr(valueStart, valueEnd - valueStart);
     }
 }
 
-// Structure for grouping statistics per payment_type
+// Improved JSON parser that never drops a row.
+// Missing or "null" values are replaced with default values:
+//   - For strings: empty string.
+//   - For numbers: 0 (or 0.0).
+//   - For store_and_fwd_flag: 'N'
+bool parseJsonLine(const string &line, TaxiTrip &trip) {
+    // tpep_pickup_datetime is required; if missing, assign empty.
+    string pickup_dt = getJsonValue(line, "tpep_pickup_datetime");
+    trip.tpep_pickup_datetime = (pickup_dt.empty() || pickup_dt == "null") ? "" : pickup_dt;
+    
+    // Other fields.
+    string dropoff_dt = getJsonValue(line, "tpep_dropoff_datetime");
+    trip.tpep_dropoff_datetime = (dropoff_dt.empty() || dropoff_dt == "null") ? "" : dropoff_dt;
+    
+    string vendorStr = getJsonValue(line, "VendorID");
+    trip.VendorID = (vendorStr.empty() || vendorStr == "null") ? 0 : stoi(vendorStr);
+    
+    string passengerStr = getJsonValue(line, "passenger_count");
+    trip.passenger_count = (passengerStr.empty() || passengerStr == "null") ? 0 : stoi(passengerStr);
+    
+    string distanceStr = getJsonValue(line, "trip_distance");
+    trip.trip_distance = (distanceStr.empty() || distanceStr == "null") ? 0.0 : stod(distanceStr);
+    
+    string paymentStr = getJsonValue(line, "payment_type");
+    trip.payment_type = (paymentStr.empty() || paymentStr == "null") ? 0 : stoi(paymentStr);
+    
+    string fareStr = getJsonValue(line, "fare_amount");
+    trip.fare_amount = (fareStr.empty() || fareStr == "null") ? 0.0 : stod(fareStr);
+    
+    string tipStr = getJsonValue(line, "tip_amount");
+    trip.tip_amount = (tipStr.empty() || tipStr == "null") ? 0.0 : stod(tipStr);
+    
+    string flagStr = getJsonValue(line, "store_and_fwd_flag");
+    trip.store_and_fwd_flag = (flagStr.empty() || flagStr == "null") ? 'N' : flagStr[0];
+    
+    // Always return true, so we never drop a record.
+    return true;
+}
+
+// Structure for grouping statistics per payment_type.
 struct GroupStats {
     long long count = 0;
     double totalFare = 0.0;
@@ -113,7 +88,7 @@ struct GroupStats {
 };
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
+    if(argc < 3) {
         cerr << "Usage: " << argv[0] << " <queryName> <data_file>\n";
         cerr << "Example: " << argv[0] << " query2 taxi-trips-data.json\n";
         return EXIT_FAILURE;
@@ -121,14 +96,14 @@ int main(int argc, char* argv[]) {
     
     string queryName = argv[1];
     string filename = argv[2];
-
-    if (queryName != "query2") {
+    
+    if(queryName != "query2") {
         cerr << "Error: Only query2 is implemented in this version.\n";
         return EXIT_FAILURE;
     }
     
     ifstream infile(filename);
-    if (!infile) {
+    if(!infile) {
         cerr << "Error opening file: " << filename << "\n";
         return EXIT_FAILURE;
     }
@@ -136,44 +111,46 @@ int main(int argc, char* argv[]) {
     unordered_map<int, GroupStats> groups;
     string line;
     long long totalLines = 0;
-    long long errorCount = 0;
+    long long parseErrors = 0;
+    long long successCount = 0;
     
-    // Process each line without storing all records in memory
-    while (getline(infile, line)) {
+    // Process each line without storing all records in memory.
+    while(getline(infile, line)) {
         totalLines++;
-        if (line.empty())
-            continue;
+        if(line.empty()) continue;
         
         TaxiTrip trip;
-        if (parseJsonLine(line, trip)) {
-            // Filter: only include trips with trip_distance > 5 miles
-            if (trip.trip_distance > 5.0) {
+        if(parseJsonLine(line, trip)) {
+            successCount++;
+            // Filter: only include trips with trip_distance > 5 miles.
+            if(trip.trip_distance > 5.0) {
                 int payment = trip.payment_type;
                 groups[payment].count++;
                 groups[payment].totalFare += trip.fare_amount;
                 groups[payment].totalTip += trip.tip_amount;
             }
         } else {
-            errorCount++;
+            parseErrors++;
         }
     }
     infile.close();
     
+    // Log parsing statistics.
+    cout << "Total lines processed: " << totalLines << "\n";
+    cout << "Successfully parsed: " << successCount << "\n";
+    cout << "Total parse errors: " << parseErrors << "\n";
     
-    // Output each group's statistics
-    for (const auto &entry : groups) {
+    // Output aggregated results.
+    cout << "Payment_type\tNum_trips\tAvg_fare\tTotal_tip\n";
+    for(const auto &entry : groups) {
         int payment = entry.first;
         const GroupStats &stats = entry.second;
         double avgFare = (stats.count > 0) ? stats.totalFare / stats.count : 0.0;
-        cout << payment << " ";
-        cout << stats.count << " ";
-        cout << avgFare <<" ";
-        cout << stats.totalTip <<endl;
+        cout << payment << "\t" 
+             << stats.count << "\t" 
+             << fixed << setprecision(15) << avgFare << "\t" 
+             << fixed << setprecision(15) << stats.totalTip << "\n";
     }
-    
-    // Optional: Report parsing statistics
-    cout << "\nTotal lines processed: " << totalLines << "\n";
-    cout << "Total parse errors: " << errorCount << "\n";
     
     return EXIT_SUCCESS;
 }
