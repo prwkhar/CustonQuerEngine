@@ -1,0 +1,12 @@
+With Batch Processing
+q1 - 84.77
+q2 - 66.7
+q3 - 69.5
+q4 - 86.12
+
+Without batch Processing
+q1 - 70.45 
+q2 - 72.55
+q3 - 71.39
+q4 - 70.06
+

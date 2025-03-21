@@ -89,8 +89,8 @@ bool parseJsonLine(const string &line, TaxiTrip &trip) {
 
 // --- Aggregation Structures --- //
 
-// Query 1: Overall record count.
- 
+// Query 1: Overall record count (just a counter).
+
 // Query 2: Group by payment_type.
 struct GroupStats {
     long long count = 0;
@@ -113,6 +113,60 @@ struct DailyStats {
     double totalTip = 0.0;
 };
 
+// --- Batch Processing Function --- //
+
+void processBatch(const string &batch,
+                  long long &totalTripCount,
+                  unordered_map<int, GroupStats> &groups,
+                  unordered_map<int, VendorStats> &vendorGroups,
+                  unordered_map<string, DailyStats> &dailyStatsMap,
+                  long long &successCount)
+{
+    // Split the batch string into lines.
+    size_t pos = 0, newlinePos;
+    string line, pickupDate;
+    TaxiTrip trip;
+    while ((newlinePos = batch.find('\n', pos)) != string::npos) {
+        line = batch.substr(pos, newlinePos - pos);
+        pos = newlinePos + 1;
+        if(line.empty()) continue;
+        if(parseJsonLine(line, trip)) {
+            successCount++;
+            // Query 1: overall count.
+            if(!trip.tpep_pickup_datetime.empty())
+                totalTripCount++;
+            // Query 2: trips with trip_distance > 5 grouped by payment_type.
+            if(trip.trip_distance > 5.0) {
+                int payment = trip.payment_type;
+                groups[payment].count++;
+                groups[payment].totalFare += trip.fare_amount;
+                groups[payment].totalTip += trip.tip_amount;
+            }
+            // Query 3: store_and_fwd_flag 'Y' and pickup date in Jan 2024, group by VendorID.
+            if(trip.store_and_fwd_flag == 'Y' && trip.tpep_pickup_datetime.size() >= 10) {
+                pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
+                if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
+                    int vendor = trip.VendorID;
+                    vendorGroups[vendor].trips++;
+                    vendorGroups[vendor].totalPassengers += trip.passenger_count;
+                }
+            }
+            // Query 4: For records with pickup date in Jan 2024, group by day.
+            if(trip.tpep_pickup_datetime.size() >= 10) {
+                pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
+                if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
+                    DailyStats &stats = dailyStatsMap[pickupDate];
+                    stats.total_trips++;
+                    stats.totalPassengers += trip.passenger_count;
+                    stats.totalDistance += trip.trip_distance;
+                    stats.totalFare += trip.fare_amount;
+                    stats.totalTip += trip.tip_amount;
+                }
+            }
+        }
+    }
+}
+
 // --- Main --- //
 
 int main(int argc, char* argv[]) {
@@ -130,46 +184,97 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
     
-    ifstream infile(filename);
+    ifstream infile(filename, ios::in | ios::binary);
     if(!infile) {
         cerr << "Error opening file: " << filename << "\n";
         return EXIT_FAILURE;
     }
     
-    // Variables for aggregation.
-    long long totalTripCount = 0;                           // For Query 1.
-    unordered_map<int, GroupStats> groups;                  // For Query 2.
-    unordered_map<int, VendorStats> vendorGroups;           // For Query 3.
-    unordered_map<string, DailyStats> dailyStatsMap;        // For Query 4.
+    // Aggregation variables.
+    long long totalTripCount = 0;                           // Query 1.
+    unordered_map<int, GroupStats> groups;                  // Query 2.
+    unordered_map<int, VendorStats> vendorGroups;           // Query 3.
+    unordered_map<string, DailyStats> dailyStatsMap;        // Query 4.
     
     // Counters for logging.
     long long totalLines = 0, parseErrors = 0, successCount = 0;
     
+    // Batch processing: Read the file in fixed-size blocks.
+    const size_t BUFFER_SIZE = 1 << 16; // 64KB
+    char buffer[BUFFER_SIZE];
+    string leftover = "";
+    
     // Start timer.
     auto startTime = high_resolution_clock::now();
     
-    // Process file line by line.
-    string line;
-    while(getline(infile, line)) {
+    while(!infile.eof()) {
+        infile.read(buffer, BUFFER_SIZE);
+        size_t bytesRead = infile.gcount();
+        if(bytesRead == 0) break;
+        // Append the block to leftover from previous iteration.
+        string block = leftover + string(buffer, bytesRead);
+        size_t pos = 0;
+        size_t newlinePos = 0;
+        while((newlinePos = block.find('\n', pos)) != string::npos) {
+            string line = block.substr(pos, newlinePos - pos);
+            pos = newlinePos + 1;
+            totalLines++;
+            // Process each line in the batch.
+            TaxiTrip trip;
+            if(parseJsonLine(line, trip)) {
+                successCount++;
+                // Query 1: overall count.
+                if(!trip.tpep_pickup_datetime.empty())
+                    totalTripCount++;
+                // Query 2: trip_distance > 5 grouped by payment_type.
+                if(trip.trip_distance > 5.0) {
+                    int payment = trip.payment_type;
+                    groups[payment].count++;
+                    groups[payment].totalFare += trip.fare_amount;
+                    groups[payment].totalTip += trip.tip_amount;
+                }
+                // Query 3: store_and_fwd_flag 'Y' and pickup date in Jan 2024, group by VendorID.
+                if(trip.store_and_fwd_flag == 'Y' && trip.tpep_pickup_datetime.size() >= 10) {
+                    string pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
+                    if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
+                        int vendor = trip.VendorID;
+                        vendorGroups[vendor].trips++;
+                        vendorGroups[vendor].totalPassengers += trip.passenger_count;
+                    }
+                }
+                // Query 4: Group by day for January 2024.
+                if(trip.tpep_pickup_datetime.size() >= 10) {
+                    string pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
+                    if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
+                        DailyStats &stats = dailyStatsMap[pickupDate];
+                        stats.total_trips++;
+                        stats.totalPassengers += trip.passenger_count;
+                        stats.totalDistance += trip.trip_distance;
+                        stats.totalFare += trip.fare_amount;
+                        stats.totalTip += trip.tip_amount;
+                    }
+                }
+            } else {
+                parseErrors++;
+            }
+        }
+        // Any remaining data after the last newline is saved as leftover.
+        leftover = block.substr(pos);
+    }
+    // Process any leftover as one last line.
+    if(!leftover.empty()) {
         totalLines++;
-        if(line.empty()) continue;
-        
         TaxiTrip trip;
-        if(parseJsonLine(line, trip)) {
+        if(parseJsonLine(leftover, trip)) {
             successCount++;
-            // Query 1: Count all records with non-empty pickup datetime.
             if(!trip.tpep_pickup_datetime.empty())
                 totalTripCount++;
-            
-            // Query 2: Filter trips with trip_distance > 5, group by payment_type.
             if(trip.trip_distance > 5.0) {
                 int payment = trip.payment_type;
                 groups[payment].count++;
                 groups[payment].totalFare += trip.fare_amount;
                 groups[payment].totalTip += trip.tip_amount;
             }
-            
-            // Query 3: For records with store_and_fwd_flag 'Y' and pickup date in January 2024, group by VendorID.
             if(trip.store_and_fwd_flag == 'Y' && trip.tpep_pickup_datetime.size() >= 10) {
                 string pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
                 if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
@@ -178,8 +283,6 @@ int main(int argc, char* argv[]) {
                     vendorGroups[vendor].totalPassengers += trip.passenger_count;
                 }
             }
-            
-            // Query 4: For records with pickup date in January 2024, group by day.
             if(trip.tpep_pickup_datetime.size() >= 10) {
                 string pickupDate = trip.tpep_pickup_datetime.substr(0, 10);
                 if(pickupDate >= "2024-01-01" && pickupDate < "2024-02-01") {
@@ -195,7 +298,6 @@ int main(int argc, char* argv[]) {
             parseErrors++;
         }
     }
-    infile.close();
     
     // Stop timer.
     auto endTime = high_resolution_clock::now();
